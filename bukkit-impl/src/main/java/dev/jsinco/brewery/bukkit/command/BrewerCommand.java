@@ -13,12 +13,14 @@ import dev.jsinco.brewery.bukkit.command.argument.EnumArgument;
 import dev.jsinco.brewery.bukkit.command.argument.OfflinePlayerArgument;
 import dev.jsinco.brewery.bukkit.command.argument.OfflinePlayerSelectorArgumentResolver;
 import dev.jsinco.brewery.bukkit.util.BukkitMessageUtil;
+import dev.jsinco.brewery.bukkit.util.SchedulerUtil;
 import dev.jsinco.brewery.util.MessageUtil;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.tag.resolver.Formatter;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
+import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
@@ -125,6 +127,7 @@ public class BrewerCommand {
         }
         return step;
     }
+
     private static Brew addBrewersToLast(Brew brew, List<UUID> brewers) {
         return lastAuthoredStepIndex(brew).map(index ->
                 brew.withModifiedStep(index, ignored -> addBrewers(brew.getSteps().get(index), brewers))
@@ -177,24 +180,52 @@ public class BrewerCommand {
                                   BiFunction<Brew, List<UUID>, Brew> brewOperation,
                                   String successMessageKey) throws CommandSyntaxException {
         CommandSender sender = context.getSource().getSender();
-        Slot targetSlot = getTargetSlot(context, BreweryCommand.getPlayer(context));
-        ItemStack itemStack = targetSlot.itemGetter.get();
-        if (itemStack.isEmpty()) {
-            MessageUtil.message(sender, "tbp.command.info.not-a-brew");
-            return 1;
-        }
+        Player target = BreweryCommand.getPlayer(context);
+        Optional<EquipmentSlot> equipmentSlot = getArgument(context, "equipment_slot", EquipmentSlot.class);
+        Optional<Integer> inventorySlot = getArgument(context, "inventory_slot", int.class);
         Optional<Integer> stepIndex = getArgument(context, "step", int.class);
         List<OfflinePlayer> brewers = getBrewers(context);
-        List<UUID> brewerUuids = brewers
-                .stream()
+        List<UUID> brewerUuids = brewers.stream()
                 .map(OfflinePlayer::getUniqueId)
                 .toList();
+
+        if (Bukkit.isOwnedByCurrentRegion(target)) {
+            return modifyBrewOwned(target, equipmentSlot, inventorySlot, stepIndex, brewers, brewerUuids,
+                    stepOperation, brewOperation, sender, successMessageKey);
+        }
+        SchedulerUtil.runForEntity(target, () -> {
+            try {
+                modifyBrewOwned(target, equipmentSlot, inventorySlot, stepIndex, brewers, brewerUuids,
+                        stepOperation, brewOperation, sender, successMessageKey);
+            } catch (CommandSyntaxException exception) {
+                SchedulerUtil.runForSender(sender, () -> sender.sendMessage(Component.text(exception.getRawMessage().getString())));
+            }
+        });
+        return 1;
+    }
+
+    private static int modifyBrewOwned(Player target,
+                                       Optional<EquipmentSlot> equipmentSlot,
+                                       Optional<Integer> inventorySlot,
+                                       Optional<Integer> stepIndex,
+                                       List<OfflinePlayer> brewers,
+                                       List<UUID> brewerUuids,
+                                       BiFunction<BrewingStep, List<UUID>, BrewingStep> stepOperation,
+                                       BiFunction<Brew, List<UUID>, Brew> brewOperation,
+                                       CommandSender sender,
+                                       String successMessageKey) throws CommandSyntaxException {
+        Slot targetSlot = getTargetSlot(target, equipmentSlot, inventorySlot);
+        ItemStack itemStack = targetSlot.itemGetter.get();
+        if (itemStack.isEmpty()) {
+            SchedulerUtil.runForSender(sender, () -> MessageUtil.message(sender, "tbp.command.info.not-a-brew"));
+            return 1;
+        }
         Optional<Brew> brewOptional = BrewAdapterAccess.fromItem(itemStack);
         if (stepIndex.isPresent() && brewOptional.isPresent() && brewOptional.get().stepAmount() <= stepIndex.get()) {
             throw INDEX_OUT_OF_BOUNDS.create(brewOptional.get().stepAmount());
         }
         if(brewOptional.map(Brew::stepAmount).filter(stepAmount -> stepAmount <= 0).isPresent()){
-            MessageUtil.message(sender, "tbp.command.brewer.empty");
+            SchedulerUtil.runForSender(sender, () -> MessageUtil.message(sender, "tbp.command.brewer.empty"));
             return 1;
         }
         brewOptional
@@ -203,13 +234,15 @@ public class BrewerCommand {
                         ).orElseGet(() -> brewOperation.apply(brew, brewerUuids))
                 ).ifPresentOrElse(brew -> {
                     targetSlot.itemSetter().accept(BrewAdapterAccess.toItem(brew, new Brew.State.Other()));
-                    MessageUtil.message(sender, successMessageKey, Placeholder.component("brewers",
-                            brewers.stream()
-                                    .map(BrewerCommand::getName)
-                                    .map(Component::text)
-                                    .collect(Component.toComponent(Component.text(", ")))
+                    Component brewerNames = brewers.stream()
+                            .map(BrewerCommand::getName)
+                            .map(Component::text)
+                            .collect(Component.toComponent(Component.text(", ")));
+                    SchedulerUtil.runForSender(sender, () -> MessageUtil.message(sender, successMessageKey,
+                            Placeholder.component("brewers", brewerNames)
                     ));
-                }, () -> MessageUtil.message(sender, "tbp.command.info.not-a-brew"));
+                }, () -> SchedulerUtil.runForSender(sender,
+                        () -> MessageUtil.message(sender, "tbp.command.info.not-a-brew")));
         return 1;
     }
 
@@ -231,15 +264,15 @@ public class BrewerCommand {
         return Optional.empty();
     }
 
-    private static Slot getTargetSlot(CommandContext<CommandSourceStack> context, Player targetPlayer) {
+    private static Slot getTargetSlot(Player targetPlayer, Optional<EquipmentSlot> equipmentSlot, Optional<Integer> inventorySlot) {
         PlayerInventory inventory = targetPlayer.getInventory();
-        return getArgument(context, "equipment_slot", EquipmentSlot.class).map(equipmentSlot -> new Slot(
-                        () -> inventory.getItem(equipmentSlot),
-                        itemStack -> inventory.setItem(equipmentSlot, itemStack)
+        return equipmentSlot.map(slot -> new Slot(
+                        () -> inventory.getItem(slot),
+                        itemStack -> inventory.setItem(slot, itemStack)
                 ))
-                .or(() -> getArgument(context, "inventory_slot", int.class).map(inventorySlot -> new Slot(
-                        () -> inventory.getItem(inventorySlot),
-                        itemStack -> inventory.setItem(inventorySlot, itemStack)
+                .or(() -> inventorySlot.map(slot -> new Slot(
+                        () -> inventory.getItem(slot),
+                        itemStack -> inventory.setItem(slot, itemStack)
                 )))
                 .orElseGet(() -> new Slot(
                         inventory::getItemInMainHand,

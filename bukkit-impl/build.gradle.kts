@@ -15,7 +15,7 @@ plugins {
     alias(libs.plugins.modrinth.publish)
 }
 
-val supportedPaperVersions = listOf("1.21.8", "1.21.9", "1.21.10", "1.21.11", "26.1.2")
+val supportedPaperVersions = listOf("1.21.8", "1.21.9", "1.21.10", "1.21.11", "26.1.2", "26.2")
 
 
 repositories {
@@ -80,6 +80,12 @@ dependencies {
     compileOnly(libs.towny)
     compileOnly(libs.worldguard.bukkit) {
         exclude("com.google.code.gson", "gson")
+        // WorldGuard pins the Minecraft-provided utility libraries to the
+        // versions shipped by older server releases. Paper 26.2 provides
+        // newer versions, so keeping those strict transitive constraints
+        // makes the compile classpath impossible to resolve.
+        exclude("com.google.guava", "guava")
+        exclude("it.unimi.dsi", "fastutil")
     }
     compileOnly(libs.quickshop.hikari)
     compileOnly(libs.mythic)
@@ -93,6 +99,7 @@ dependencies {
 
     // test
     testImplementation(libs.junit.jupiter)
+    testImplementation(libs.paper.api)
     testRuntimeOnly(libs.junit.platform.launcher)
 
     testImplementation(testFixtures(project(":api")))
@@ -108,7 +115,7 @@ tasks {
 
 
     runServer {
-        minecraftVersion("1.21.11")
+        minecraftVersion("26.2")
         if (project.findProperty("testing.integrations")!! == "true") {
             downloadPlugins {
                 modrinth("worldedit", "JUWRHdru")

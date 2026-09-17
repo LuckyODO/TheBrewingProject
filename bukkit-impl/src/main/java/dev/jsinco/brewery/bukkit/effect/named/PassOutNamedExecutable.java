@@ -5,6 +5,7 @@ import dev.jsinco.brewery.api.event.EventStepProperty;
 import dev.jsinco.brewery.api.event.NamedDrunkEvent;
 import dev.jsinco.brewery.bukkit.TheBrewingProject;
 import dev.jsinco.brewery.bukkit.util.BukkitMessageUtil;
+import dev.jsinco.brewery.bukkit.util.SchedulerUtil;
 import dev.jsinco.brewery.configuration.Config;
 import dev.jsinco.brewery.configuration.EventSection;
 import dev.jsinco.brewery.effect.DrunksManagerImpl;
@@ -36,7 +37,9 @@ public class PassOutNamedExecutable implements EventPropertyExecutable {
         player.kick(GlobalTranslator.render(playerKickMessage, Config.config().language()));
         if (kickEventSection.kickServerMessage() != null) {
             Component message = MessageUtil.miniMessage(kickEventSection.kickServerMessage(), BukkitMessageUtil.getPlayerTagResolver(player));
-            Bukkit.getOnlinePlayers().forEach(audience -> audience.sendMessage(message));
+            SchedulerUtil.runGlobal(() -> Bukkit.getOnlinePlayers().forEach(audience ->
+                    SchedulerUtil.runForEntity(audience, () -> audience.sendMessage(message))
+            ));
         }
         drunksManager.registerPassedOut(player.getUniqueId());
         return ExecutionResult.CONTINUE;

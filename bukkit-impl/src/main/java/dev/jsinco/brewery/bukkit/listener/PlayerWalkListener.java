@@ -4,17 +4,18 @@ import org.bukkit.Input;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerMoveEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class PlayerWalkListener implements Listener {
 
 
-    private Map<UUID, Vector> movements = new HashMap<>();
+    private final Map<UUID, Vector> movements = new ConcurrentHashMap<>();
 
 
     @EventHandler(ignoreCancelled = true)
@@ -29,5 +30,10 @@ public class PlayerWalkListener implements Listener {
 
     public @Nullable Vector getRegisteredMovement(UUID player) {
         return movements.get(player);
+    }
+
+    @EventHandler
+    public void onPlayerQuit(PlayerQuitEvent event) {
+        movements.remove(event.getPlayer().getUniqueId());
     }
 }

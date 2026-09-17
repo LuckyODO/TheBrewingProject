@@ -13,6 +13,7 @@ import dev.jsinco.brewery.api.structure.StructureType;
 import dev.jsinco.brewery.api.util.Logger;
 import dev.jsinco.brewery.api.util.Pair;
 import dev.jsinco.brewery.bukkit.TheBrewingProject;
+import dev.jsinco.brewery.bukkit.util.SchedulerUtil;
 import dev.jsinco.brewery.configuration.DrunkenModifierSection;
 import dev.jsinco.brewery.util.MessageUtil;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
@@ -49,6 +50,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.TreeMap;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -180,16 +182,75 @@ public class DebugDumpCommand {
     private static int execute(CommandContext<CommandSourceStack> context, String argsString) {
         CommandSender sender = context.getSource().getSender();
         MessageUtil.message(sender, "tbp.command.dump.pending");
-        Bukkit.getAsyncScheduler().runNow(TheBrewingProject.getInstance(), scheduledTask -> {
-            File zipFile = createDebugDump(argsString);
-            if (zipFile == null) {
-                MessageUtil.message(sender, "tbp.command.dump.failure");
-            } else {
-                MessageUtil.message(sender, "tbp.command.dump.success",
-                        Placeholder.unparsed("file", zipFile.getAbsolutePath()));
+        collectDumpSnapshot().whenComplete((snapshot, snapshotError) -> {
+            if (snapshotError != null) {
+                Logger.logAndTrackErr(snapshotError);
+                SchedulerUtil.runForSender(sender, () -> MessageUtil.message(sender, "tbp.command.dump.failure"));
+                return;
             }
+            Bukkit.getAsyncScheduler().runNow(TheBrewingProject.getInstance(), scheduledTask -> {
+                File zipFile = createDebugDump(argsString, snapshot);
+                SchedulerUtil.runForSender(sender, () -> {
+                    if (zipFile == null) {
+                        MessageUtil.message(sender, "tbp.command.dump.failure");
+                    } else {
+                        MessageUtil.message(sender, "tbp.command.dump.success",
+                                Placeholder.unparsed("file", zipFile.getAbsolutePath()));
+                    }
+                });
+            });
         });
         return 1;
+    }
+
+    private static CompletableFuture<DumpSnapshot> collectDumpSnapshot() {
+        CompletableFuture<DumpSnapshot> result = new CompletableFuture<>();
+        SchedulerUtil.runGlobal(() -> {
+            YamlConfiguration server = createServerDump();
+            List<CompletableFuture<PlayerSnapshot>> playerFutures = List.copyOf(Bukkit.getOnlinePlayers()).stream()
+                    .map(DebugDumpCommand::collectPlayerSnapshot)
+                    .toList();
+            CompletableFuture.allOf(playerFutures.toArray(CompletableFuture[]::new))
+                    .whenComplete((ignored, playerError) -> {
+                        if (playerError != null) {
+                            result.completeExceptionally(playerError);
+                            return;
+                        }
+                        SchedulerUtil.runGlobal(() -> {
+                            List<PlayerSnapshot> players = playerFutures.stream()
+                                    .map(future -> future.getNow(null))
+                                    .filter(java.util.Objects::nonNull)
+                                    .toList();
+                            long drunkPlayers = players.stream().filter(PlayerSnapshot::drunk).count();
+                            result.complete(new DumpSnapshot(
+                                    server,
+                                    createTbpDump(drunkPlayers),
+                                    createPlayerDump(players)
+                            ));
+                        });
+                    });
+        }).exceptionally(throwable -> {
+            result.completeExceptionally(throwable);
+            return null;
+        });
+        return result;
+    }
+
+    private static CompletableFuture<PlayerSnapshot> collectPlayerSnapshot(Player player) {
+        CompletableFuture<PlayerSnapshot> result = new CompletableFuture<>();
+        player.getScheduler().run(
+                TheBrewingProject.getInstance(),
+                ignored -> {
+                    try {
+                        result.complete(createPlayerSnapshot(player));
+                    } catch (RuntimeException | Error throwable) {
+                        result.completeExceptionally(throwable);
+                        throw throwable;
+                    }
+                },
+                () -> result.complete(null)
+        );
+        return result;
     }
 
     private static CompletableFuture<Suggestions> suggest(CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) {
@@ -232,7 +293,7 @@ public class DebugDumpCommand {
         }
     }
 
-    private static File createDebugDump(String argsString) {
+    private static File createDebugDump(String argsString, DumpSnapshot snapshot) {
         TheBrewingProject plugin = TheBrewingProject.getInstance();
         File dataFolder = plugin.getDataFolder();
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"));
@@ -245,7 +306,7 @@ public class DebugDumpCommand {
         File zipFile = new File(outputDir, "DebugDump_" + timestamp + ".zip");
         try (ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(zipFile)))) {
             for (String spec : filesToInclude) {
-                addSpecToZip(zos, spec, dataFolder);
+                addSpecToZip(zos, spec, dataFolder, snapshot);
             }
         } catch (IOException e) {
             Logger.logAndTrackErr("Failed to create debug dump: " + e.getMessage());
@@ -254,12 +315,12 @@ public class DebugDumpCommand {
         return zipFile;
     }
 
-    private static void addSpecToZip(ZipOutputStream zos, String spec, File dataFolder) throws IOException {
+    private static void addSpecToZip(ZipOutputStream zos, String spec, File dataFolder, DumpSnapshot snapshot) throws IOException {
         switch (spec) {
             case "system.yml" -> addYaml(zos, spec, createSystemDump());
-            case "server.yml" -> addYaml(zos, spec, createServerDump());
-            case "tbp.yml" -> addYaml(zos, spec, createTbpDump());
-            case "players.yml" -> addYaml(zos, spec, createPlayerDump());
+            case "server.yml" -> addYaml(zos, spec, snapshot.server());
+            case "tbp.yml" -> addYaml(zos, spec, snapshot.tbp());
+            case "players.yml" -> addYaml(zos, spec, snapshot.players());
             case "config.yml" -> addRedactedConfig(zos, new File(dataFolder, spec));
             case LOG_FILE -> addFile(zos, new File("logs/latest.log"), spec);
             default -> addFile(zos, new File(dataFolder, spec), spec);
@@ -358,7 +419,7 @@ public class DebugDumpCommand {
         return server;
     }
 
-    private static YamlConfiguration createTbpDump() {
+    private static YamlConfiguration createTbpDump(long drunkPlayers) {
         TheBrewingProject plugin = TheBrewingProject.getInstance();
         YamlConfiguration tbp = new YamlConfiguration();
         tbp.set("version", 1);
@@ -375,86 +436,96 @@ public class DebugDumpCommand {
         tbp.set("tbp.placedDistilleries", plugin.getPlacedStructureRegistry().getStructures(StructureType.DISTILLERY).size());
         tbp.set("tbp.openedBarrels", plugin.getBreweryRegistry().countOpened(StructureType.BARREL));
         tbp.set("tbp.openedDistilleries", plugin.getBreweryRegistry().countOpened(StructureType.DISTILLERY));
-        tbp.set("tbp.drunkPlayers", Bukkit.getOnlinePlayers().stream()
-                .filter(p -> plugin.getDrunksManager().getDrunkState(p.getUniqueId()) != null)
-                .count());
+        tbp.set("tbp.drunkPlayers", drunkPlayers);
         return tbp;
     }
 
-    private static YamlConfiguration createPlayerDump() {
-        TheBrewingProject plugin = TheBrewingProject.getInstance();
+    private static YamlConfiguration createPlayerDump(List<PlayerSnapshot> snapshots) {
         YamlConfiguration players = new YamlConfiguration();
         players.set("version", 1);
-
-        for (Player player : Bukkit.getOnlinePlayers()) {
-            String uuid = player.getUniqueId().toString();
-
-            // Basic info
-            players.set("players." + uuid + ".name", player.getName());
-            players.set("players." + uuid + ".locale", player.getLocale());
-            players.set("players." + uuid + ".op", player.isOp());
-            players.set("players." + uuid + ".ping", player.getPing());
-            players.set("players." + uuid + ".dead", player.isDead());
-            players.set("players." + uuid + ".health", player.getHealth());
-            players.set("players." + uuid + ".maxHealth", player.getMaxHealth());
-            players.set("players." + uuid + ".gameMode", player.getGameMode().name());
-            players.set("players." + uuid + ".world", player.getWorld().getName());
-            players.set("players." + uuid + ".location",
-                    String.format("%.2f, %.2f, %.2f", player.getX(), player.getY(), player.getZ()));
-
-            // TBP drunk state
-            DrunkState drunkState = plugin.getDrunksManager().getDrunkState(player.getUniqueId());
-            if (drunkState != null) {
-                for (DrunkenModifier modifier : DrunkenModifierSection.modifiers().drunkenModifiers()) {
-                    players.set("players." + uuid + ".tbp.modifiers." + modifier.name(),
-                            drunkState.modifierValue(modifier));
-                }
-                players.set("players." + uuid + ".tbp.stateTimestamp", drunkState.timestamp());
-            }
-            players.set("players." + uuid + ".tbp.passedOut",
-                    plugin.getDrunksManager().isPassedOut(player.getUniqueId()));
-
-            // Planned drunk event
-            Pair<DrunkEvent, Long> plannedEvent = plugin.getDrunksManager().getPlannedEvent(player.getUniqueId());
-            if (plannedEvent != null) {
-                players.set("players." + uuid + ".tbp.plannedEvent.key",
-                        plannedEvent.first().key().toString());
-                players.set("players." + uuid + ".tbp.plannedEvent.ticksUntil",
-                        plannedEvent.second() - plugin.getTime());
-            }
-
-            // TBP bypass permissions
-            List<String> overrides = new ArrayList<>();
-            for (PermissionAttachmentInfo info : player.getEffectivePermissions()) {
-                if (info.getPermission().startsWith("brewery.override.")) {
-                    overrides.add(info.getPermission() + ": " + info.getValue());
-                }
-            }
-            if (!overrides.isEmpty()) {
-                players.set("players." + uuid + ".tbp.overridePermissions", overrides);
-            }
-
-            // Active attribute modifiers
-            for (Attribute attribute : Registry.ATTRIBUTE) {
-                AttributeInstance instance = player.getAttribute(attribute);
-                if (instance == null) continue;
-                for (AttributeModifier modifier : instance.getModifiers()) {
-                    String key = "players." + uuid + ".attributes." + attribute.getKey().getKey() + ".modifiers." + modifier.getName();
-                    players.set(key + ".operation", modifier.getOperation().name());
-                    players.set(key + ".amount", modifier.getAmount());
-                }
-            }
-
-            // Active potion effects
-            for (PotionEffect effect : player.getActivePotionEffects()) {
-                String key = "players." + uuid + ".effects." + effect.getType();
-                players.set(key + ".amplifier", effect.getAmplifier());
-                players.set(key + ".duration", effect.getDuration());
-                players.set(key + ".particles", effect.hasParticles());
-                players.set(key + ".ambient", effect.isAmbient());
-                players.set(key + ".icon", effect.hasIcon());
-            }
+        for (PlayerSnapshot snapshot : snapshots) {
+            snapshot.values().forEach((key, value) ->
+                    players.set("players." + snapshot.uuid() + "." + key, value)
+            );
         }
         return players;
+    }
+
+    private static PlayerSnapshot createPlayerSnapshot(Player player) {
+        TheBrewingProject plugin = TheBrewingProject.getInstance();
+        UUID uuid = player.getUniqueId();
+        Map<String, Object> values = new LinkedHashMap<>();
+
+        // Basic info
+        values.put("name", player.getName());
+        values.put("locale", player.getLocale());
+        values.put("op", player.isOp());
+        values.put("ping", player.getPing());
+        values.put("dead", player.isDead());
+        values.put("health", player.getHealth());
+        values.put("maxHealth", player.getMaxHealth());
+        values.put("gameMode", player.getGameMode().name());
+        values.put("world", player.getWorld().getName());
+        values.put("location",
+                String.format("%.2f, %.2f, %.2f", player.getX(), player.getY(), player.getZ()));
+
+        // TBP drunk state
+        DrunkState drunkState = plugin.getDrunksManager().getDrunkState(uuid);
+        if (drunkState != null) {
+            for (DrunkenModifier modifier : DrunkenModifierSection.modifiers().drunkenModifiers()) {
+                values.put("tbp.modifiers." + modifier.name(),
+                        drunkState.modifierValue(modifier));
+            }
+            values.put("tbp.stateTimestamp", drunkState.timestamp());
+        }
+        values.put("tbp.passedOut", plugin.getDrunksManager().isPassedOut(uuid));
+
+        // Planned drunk event
+        Pair<DrunkEvent, Long> plannedEvent = plugin.getDrunksManager().getPlannedEvent(uuid);
+        if (plannedEvent != null) {
+            values.put("tbp.plannedEvent.key",
+                    plannedEvent.first().key().toString());
+            values.put("tbp.plannedEvent.ticksUntil",
+                    plannedEvent.second() - plugin.getTime());
+        }
+
+        // TBP bypass permissions
+        List<String> overrides = new ArrayList<>();
+        for (PermissionAttachmentInfo info : player.getEffectivePermissions()) {
+            if (info.getPermission().startsWith("brewery.override.")) {
+                overrides.add(info.getPermission() + ": " + info.getValue());
+            }
+        }
+        if (!overrides.isEmpty()) {
+            values.put("tbp.overridePermissions", overrides);
+        }
+
+        // Active attribute modifiers
+        for (Attribute attribute : Registry.ATTRIBUTE) {
+            AttributeInstance instance = player.getAttribute(attribute);
+            if (instance == null) continue;
+            for (AttributeModifier modifier : instance.getModifiers()) {
+                String key = "attributes." + attribute.getKey().getKey() + ".modifiers." + modifier.getName();
+                values.put(key + ".operation", modifier.getOperation().name());
+                values.put(key + ".amount", modifier.getAmount());
+            }
+        }
+
+        // Active potion effects
+        for (PotionEffect effect : player.getActivePotionEffects()) {
+            String key = "effects." + effect.getType();
+            values.put(key + ".amplifier", effect.getAmplifier());
+            values.put(key + ".duration", effect.getDuration());
+            values.put(key + ".particles", effect.hasParticles());
+            values.put(key + ".ambient", effect.isAmbient());
+            values.put(key + ".icon", effect.hasIcon());
+        }
+        return new PlayerSnapshot(uuid.toString(), Map.copyOf(values), drunkState != null);
+    }
+
+    private record DumpSnapshot(YamlConfiguration server, YamlConfiguration tbp, YamlConfiguration players) {
+    }
+
+    private record PlayerSnapshot(String uuid, Map<String, Object> values, boolean drunk) {
     }
 }

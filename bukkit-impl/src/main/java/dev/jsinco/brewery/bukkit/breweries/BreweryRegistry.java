@@ -37,7 +37,7 @@ public final class BreweryRegistry {
     }
 
     public Collection<SinglePositionStructure> getActiveSinglePositionStructure() {
-        return activeSingleBlockStructures.values();
+        return List.copyOf(activeSingleBlockStructures.values());
     }
 
     public <H extends InventoryAccessible<ItemStack, Inventory>> void registerOpened(H holder) {
@@ -80,29 +80,32 @@ public final class BreweryRegistry {
     }
 
     public void clear() {
-        activeSingleBlockStructures.forEach((ignored, structure) -> structure.destroy());
+        List<SinglePositionStructure> activeStructures = List.copyOf(activeSingleBlockStructures.values());
         activeSingleBlockStructures.clear();
         synchronized (opened) {
             opened.clear();
         }
         inventories.clear();
+        activeStructures.forEach(SinglePositionStructure::destroy);
     }
 
     public <T> void iterate(StructureType<T> type, Consumer<T> inventoryAccessibleAction) {
+        List<T> snapshot;
         synchronized (opened) {
             Set<InventoryAccessible<ItemStack, Inventory>> inventoryAccessible = opened.get(type);
             if (inventoryAccessible == null) {
                 return;
             }
-            inventoryAccessible.stream()
+            snapshot = inventoryAccessible.stream()
                     .map(type.tClass()::cast)
-                    .forEach(inventoryAccessibleAction);
+                    .toList();
         }
+        snapshot.forEach(inventoryAccessibleAction);
     }
 
     public int countOpened(StructureType<?> type) {
         synchronized (opened) {
-            return opened.get(type).size();
+            return opened.getOrDefault(type, Set.of()).size();
         }
     }
 }

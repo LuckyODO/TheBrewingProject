@@ -15,10 +15,10 @@ repositories {
     maven("https://storehouse.okaeri.eu/repository/maven-public/")
 }
 
-java.toolchain.languageVersion.set(JavaLanguageVersion.of(21))
+java.toolchain.languageVersion.set(JavaLanguageVersion.of(25))
 
 dependencies {
-    compileOnly("io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT")
+    compileOnly(libs.paper.api)
 
     compileOnly(project(":bukkit-impl"))
     compileOnly(project(":core"))

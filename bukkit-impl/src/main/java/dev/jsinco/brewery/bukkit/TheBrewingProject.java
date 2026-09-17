@@ -3,6 +3,7 @@ package dev.jsinco.brewery.bukkit;
 import com.google.common.base.Preconditions;
 import dev.faststats.bukkit.BukkitContext;
 import dev.jsinco.brewery.api.brew.BrewManager;
+import dev.jsinco.brewery.api.breweries.SelfSchedulingBrewery;
 import dev.jsinco.brewery.api.breweries.Tickable;
 import dev.jsinco.brewery.api.config.Configuration;
 import dev.jsinco.brewery.api.effect.modifier.ModifierManager;
@@ -125,6 +126,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
@@ -150,7 +152,8 @@ public class TheBrewingProject extends JavaPlugin implements TheBrewingProjectAp
     private DrunkEventExecutor drunkEventExecutor;
     private ResourcePackColors resourcePackColors;
     private CompletableFuture<ResolvedIngredientManager<ItemStack>> ingredientManagerFuture = new CompletableFuture<>();
-    private long time;
+    private volatile long time;
+    private volatile boolean tickFreezeStateAvailable = true;
     private BrewManager<ItemStack> brewManager = new BukkitBrewManager();
     private final IntegrationManagerImpl integrationManager = new IntegrationManagerImpl();
     private final ActiveEventsRegistry activeEventsRegistry = new ActiveEventsRegistry();
@@ -441,9 +444,22 @@ public class TheBrewingProject extends JavaPlugin implements TheBrewingProjectAp
     }
 
     private void closeDatabase() {
+        if (database == null) {
+            return;
+        }
         try {
-            breweryRegistry.iterate(StructureType.BARREL, inventoryAccessible -> inventoryAccessible.close(true));
-            breweryRegistry.iterate(StructureType.DISTILLERY, inventoryAccessible -> inventoryAccessible.close(true));
+            List<CompletableFuture<Void>> closeFutures = new ArrayList<>();
+            if (breweryRegistry != null) {
+                breweryRegistry.iterate(StructureType.BARREL, inventoryAccessible -> {
+                    BukkitBarrel barrel = (BukkitBarrel) inventoryAccessible;
+                    closeFutures.add(closeLocally(barrel, () -> barrel.close(true)));
+                });
+                breweryRegistry.iterate(StructureType.DISTILLERY, inventoryAccessible -> {
+                    BukkitDistillery distillery = (BukkitDistillery) inventoryAccessible;
+                    closeFutures.add(closeLocally(distillery, () -> distillery.close(true)));
+                });
+                CompletableFuture.allOf(closeFutures.toArray(CompletableFuture[]::new)).join();
+            }
         } catch (Throwable e) {
             Logger.logAndTrackErr(e);
         }
@@ -525,9 +541,29 @@ public class TheBrewingProject extends JavaPlugin implements TheBrewingProjectAp
 
 
     private boolean noTicking() {
-        ServerTickManager serverTickManager = Bukkit.getServerTickManager();
-        return serverTickManager.isFrozen() && !serverTickManager.isSprinting()
-                && !serverTickManager.isStepping();
+        if (!tickFreezeStateAvailable) {
+            return false;
+        }
+        try {
+            ServerTickManager serverTickManager = Bukkit.getServerTickManager();
+            return serverTickManager.isFrozen() && !serverTickManager.isSprinting()
+                    && !serverTickManager.isStepping();
+        } catch (UnsupportedOperationException unsupported) {
+            // Folia and region-threaded forks such as Canvas do not expose a single
+            // server-wide freeze state. Disable this optional Paper-only guard after
+            // the first probe so the two per-tick tasks cannot flood the server log.
+            tickFreezeStateAvailable = false;
+            Logger.logWarn("Server-wide tick freeze detection is unavailable; continuing with region-local ticking.");
+            return false;
+        }
+    }
+
+    private CompletableFuture<Void> closeLocally(SelfSchedulingBrewery brewery, Runnable closeAction) {
+        if (isEnabled()) {
+            return brewery.runLocally(closeAction);
+        }
+        closeAction.run();
+        return CompletableFuture.completedFuture(null);
     }
 
     @Override

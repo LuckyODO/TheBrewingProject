@@ -22,11 +22,13 @@ import dev.jsinco.brewery.bukkit.command.argument.EnumArgument;
 import dev.jsinco.brewery.bukkit.command.argument.FlaggedArgumentBuilder;
 import dev.jsinco.brewery.bukkit.command.argument.IngredientsArgument;
 import dev.jsinco.brewery.bukkit.command.argument.RegistryArgument;
+import dev.jsinco.brewery.bukkit.util.SchedulerUtil;
 import dev.jsinco.brewery.configuration.Config;
 import dev.jsinco.brewery.util.MessageUtil;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
+import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
@@ -70,14 +72,17 @@ public class CreateCommand {
                 }
             }
             Player target = BreweryCommand.getPlayer(context);
-            ItemStack brewItem = BrewAdapterAccess.toItem(new BrewImpl(steps), new BrewImpl.State.Other());
-            PlayerInventory inventory = target.getInventory();
-            if (!inventory.addItem(brewItem).isEmpty()) {
-                target.getWorld().dropItem(target.getLocation(), brewItem);
-            }
-            MessageUtil.message(context.getSource().getSender(), "tbp.command.create.success",
-                    Placeholder.component("brew_name", brewItem.effectiveName())
-            );
+            CommandSender sender = context.getSource().getSender();
+            SchedulerUtil.runForEntity(target, () -> {
+                ItemStack brewItem = BrewAdapterAccess.toItem(new BrewImpl(steps), new BrewImpl.State.Other());
+                PlayerInventory inventory = target.getInventory();
+                if (!inventory.addItem(brewItem).isEmpty()) {
+                    target.getWorld().dropItem(target.getLocation(), brewItem);
+                }
+                SchedulerUtil.runForSender(sender, () -> MessageUtil.message(sender, "tbp.command.create.success",
+                        Placeholder.component("brew_name", brewItem.effectiveName())
+                ));
+            });
         }).build();
         ArgumentBuilder<CommandSourceStack, ?> root = Commands.literal("create");
         tree.forEach(root::then);

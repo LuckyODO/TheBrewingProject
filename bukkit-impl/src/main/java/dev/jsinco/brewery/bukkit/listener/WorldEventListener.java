@@ -37,6 +37,7 @@ public class WorldEventListener implements Listener {
         loadWorld(event.getWorld());
     }
 
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onWorldUnload(WorldUnloadEvent event) {
         placedStructureRegistry.unloadWorld(event.getWorld().getUID());
     }

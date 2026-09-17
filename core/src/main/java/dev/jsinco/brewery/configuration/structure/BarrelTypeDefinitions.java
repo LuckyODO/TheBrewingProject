@@ -33,6 +33,10 @@ public class BarrelTypeDefinitions extends OkaeriConfig {
         File barrelTypesFile = new File("plugins/TheBrewingProject", "barrel_types.yml");
         try {
             if (!barrelTypesFile.exists()) {
+                File parent = barrelTypesFile.getParentFile();
+                if (parent != null && !parent.exists() && !parent.mkdirs()) {
+                    throw new IOException("Could not create directory: " + parent);
+                }
                 if (!barrelTypesFile.createNewFile()) {
                     throw new IOException("Could not create file, even though did not exist: " + barrelTypesFile);
                 }

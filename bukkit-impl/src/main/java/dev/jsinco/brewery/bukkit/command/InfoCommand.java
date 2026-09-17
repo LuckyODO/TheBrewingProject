@@ -10,6 +10,7 @@ import dev.jsinco.brewery.bukkit.brew.BrewAdapterAccess;
 import dev.jsinco.brewery.bukkit.command.argument.EnumArgument;
 import dev.jsinco.brewery.bukkit.recipe.RecipeEffectsImpl;
 import dev.jsinco.brewery.bukkit.util.BukkitMessageUtil;
+import dev.jsinco.brewery.bukkit.util.SchedulerUtil;
 import dev.jsinco.brewery.recipes.BrewScoreImpl;
 import dev.jsinco.brewery.util.MessageUtil;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
@@ -23,10 +24,10 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.inventory.PlayerInventory;
 import org.jspecify.annotations.Nullable;
 
 import java.util.Optional;
+import java.util.function.Supplier;
 
 public class InfoCommand {
     private static final int PLAYER_INVENTORY_SIZE = 41;
@@ -36,15 +37,14 @@ public class InfoCommand {
                 .executes(context -> {
                     Player target = BreweryCommand.getPlayer(context);
                     int slot = context.getArgument("inventory_slot", int.class);
-                    PlayerInventory inventory = target.getInventory();
-                    showInfo(inventory.getItem(slot), context.getSource().getSender(), debug);
+                    inspectItem(target, () -> target.getInventory().getItem(slot), context.getSource().getSender(), debug);
                     return 1;
                 });
         ArgumentBuilder<CommandSourceStack, ?> withNamedSlot = Commands.argument("equipment_slot", new EnumArgument<>(EquipmentSlot.class))
                 .executes(context -> {
                     Player target = BreweryCommand.getPlayer(context);
-                    PlayerInventory inventory = target.getInventory();
-                    showInfo(inventory.getItem(context.getArgument("equipment_slot", EquipmentSlot.class)), context.getSource().getSender(), debug);
+                    EquipmentSlot slot = context.getArgument("equipment_slot", EquipmentSlot.class);
+                    inspectItem(target, () -> target.getInventory().getItem(slot), context.getSource().getSender(), debug);
                     return 1;
                 });
         return Commands.literal(name)
@@ -60,9 +60,16 @@ public class InfoCommand {
 
     private static int showHeldItemInfo(CommandContext<CommandSourceStack> context, boolean debug) throws CommandSyntaxException {
         Player target = BreweryCommand.getPlayer(context);
-        PlayerInventory inventory = target.getInventory();
-        showInfo(inventory.getItemInMainHand(), context.getSource().getSender(), debug);
+        inspectItem(target, () -> target.getInventory().getItemInMainHand(), context.getSource().getSender(), debug);
         return 1;
+    }
+
+    private static void inspectItem(Player target, Supplier<ItemStack> itemSupplier, CommandSender sender, boolean debug) {
+        SchedulerUtil.runForEntity(target, () -> {
+            ItemStack item = itemSupplier.get();
+            ItemStack snapshot = item == null ? null : item.clone();
+            SchedulerUtil.runForSender(sender, () -> showInfo(snapshot, sender, debug));
+        });
     }
 
     private static void showInfo(@Nullable ItemStack itemStack, CommandSender sender, boolean debug) {

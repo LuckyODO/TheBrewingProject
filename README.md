@@ -16,6 +16,12 @@ and [Modrinth](https://modrinth.com/plugin/thebrewingproject).
 > [!IMPORTANT]
 > TheBrewingProject only works on PaperMC and its forks!
 
+#### Server compatibility
+
+The main server plugin currently targets **Paper, Folia, and Canvas 26.2** and must be built and run with **Java 25**.
+Region-threaded servers are supported through Folia's global, region, and entity schedulers; keep
+`folia-supported: true` in the generated plugin descriptor.
+
 [Button Icon]: https://img.shields.io/badge/Installation-EF2D5E?style=for-the-badge&logoColor=white&logo=Files
 
 ***
@@ -139,5 +145,5 @@ public class MyItemIntegration extends ItemIntegration {
 **Build**
 
 ```
-gradlew bukkit:shadowJar
+gradlew :bukkit-impl:shadowJar
 ```

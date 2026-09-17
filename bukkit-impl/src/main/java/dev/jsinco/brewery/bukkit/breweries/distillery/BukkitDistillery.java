@@ -25,6 +25,7 @@ import dev.jsinco.brewery.bukkit.structure.PlacedBreweryStructure;
 import dev.jsinco.brewery.bukkit.util.BlockUtil;
 import dev.jsinco.brewery.bukkit.util.LocationUtil;
 import dev.jsinco.brewery.bukkit.util.SoundPlayer;
+import dev.jsinco.brewery.bukkit.util.SchedulerUtil;
 import dev.jsinco.brewery.bukkit.util.VectorUtil;
 import dev.jsinco.brewery.configuration.Config;
 import dev.jsinco.brewery.database.PersistenceException;
@@ -271,19 +272,17 @@ public class BukkitDistillery implements Distillery<BukkitDistillery, ItemStack,
 
     public void tick() {
         BreweryLocation unique = getStructure().getUnique();
-        long timeProcessed = getTimeProcessed();
-        if (timeProcessed < 0) {
-            resetStartTime();
-            return;
-        }
-        long processTime = getProcessTime();
-        int processedBrews = (int) ((timeProcessed / processTime) * getStructure().getStructure().getMeta(StructureMeta.PROCESS_AMOUNT));
-        if (!BlockUtil.isChunkLoaded(unique)
-                || mixture.brewAmount() < processedBrews
-                || distillate.isFull()) {
-            return;
-        }
         BukkitAdapter.scheduleIfLoaded(unique, TheBrewingProject.getInstance(), location -> {
+            long timeProcessed = getTimeProcessed();
+            if (timeProcessed < 0) {
+                resetStartTime();
+                return;
+            }
+            long processTime = getProcessTime();
+            int processedBrews = (int) ((timeProcessed / processTime) * getStructure().getStructure().getMeta(StructureMeta.PROCESS_AMOUNT));
+            if (mixture.brewAmount() < processedBrews || distillate.isFull()) {
+                return;
+            }
             checkDirty();
             if (timeProcessed % processTime == 0 && timeProcessed > 0) {
                 SoundPlayer.playSoundEffect(
@@ -469,11 +468,6 @@ public class BukkitDistillery implements Distillery<BukkitDistillery, ItemStack,
 
     @Override
     public CompletableFuture<Void> runLocally(Runnable action) {
-        CompletableFuture<Void> completableFuture = new CompletableFuture<>();
-        Bukkit.getRegionScheduler().run(TheBrewingProject.getInstance(), structure.getWorldOrigin(), ignored -> {
-            action.run();
-            completableFuture.complete(null);
-        });
-        return completableFuture;
+        return SchedulerUtil.runForLocation(structure.getWorldOrigin(), action);
     }
 }

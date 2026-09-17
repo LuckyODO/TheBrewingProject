@@ -36,16 +36,29 @@ public class BukkitAdapter {
 
     public static CompletableFuture<Void> scheduleIfLoaded(BreweryLocation location, Plugin owner, Consumer<Location> locationConsumer) {
         Optional<Location> locationOptional = toLocation(location);
-        if (!locationOptional.map(Location::isChunkLoaded).orElse(false)) {
+        if (locationOptional.isEmpty()) {
             return CompletableFuture.completedFuture(null);
         }
+        Location bukkitLocation = locationOptional.get();
         CompletableFuture<Void> output = new CompletableFuture<>();
-        Bukkit.getRegionScheduler().run(owner, locationOptional.get(), ignored -> {
-            if (locationOptional.get().isChunkLoaded()) {
-                locationConsumer.accept(locationOptional.get());
+        Runnable action = () -> {
+            try {
+                // The loaded-state check itself belongs to the region that owns the
+                // chunk. Canvas 26.2 enforces this more strictly than Paper.
+                if (bukkitLocation.isChunkLoaded()) {
+                    locationConsumer.accept(bukkitLocation);
+                }
+                output.complete(null);
+            } catch (RuntimeException | Error throwable) {
+                output.completeExceptionally(throwable);
+                throw throwable;
             }
-            output.complete(null);
-        });
+        };
+        if (Bukkit.isOwnedByCurrentRegion(bukkitLocation)) {
+            action.run();
+        } else {
+            Bukkit.getRegionScheduler().run(owner, bukkitLocation, ignored -> action.run());
+        }
         return output;
     }
 

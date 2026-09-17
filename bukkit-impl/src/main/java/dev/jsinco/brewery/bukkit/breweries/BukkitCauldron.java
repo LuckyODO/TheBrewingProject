@@ -30,6 +30,7 @@ import dev.jsinco.brewery.bukkit.recipe.RecipeMatcherImpl;
 import dev.jsinco.brewery.bukkit.util.BlockUtil;
 import dev.jsinco.brewery.bukkit.util.BukkitIngredientUtil;
 import dev.jsinco.brewery.bukkit.util.SoundPlayer;
+import dev.jsinco.brewery.bukkit.util.SchedulerUtil;
 import dev.jsinco.brewery.bukkit.util.color.ColorUtil;
 import dev.jsinco.brewery.configuration.AnimationDisplay;
 import dev.jsinco.brewery.configuration.Config;
@@ -622,7 +623,9 @@ public class BukkitCauldron implements Cauldron {
     @Override
     public void destroy() {
         if (waterColorer != null) {
-            waterColorer.remove();
+            TextDisplay display = waterColorer;
+            waterColorer = null;
+            SchedulerUtil.runForEntity(display, display::remove);
         }
     }
 
@@ -644,11 +647,6 @@ public class BukkitCauldron implements Cauldron {
 
     @Override
     public CompletableFuture<Void> runLocally(Runnable action) {
-        CompletableFuture<Void> completableFuture = new CompletableFuture<>();
-        Bukkit.getRegionScheduler().run(TheBrewingProject.getInstance(), BukkitAdapter.toLocation(location).orElseThrow(), ignored -> {
-            action.run();
-            completableFuture.complete(null);
-        });
-        return completableFuture;
+        return SchedulerUtil.runForLocation(BukkitAdapter.toLocation(location).orElseThrow(), action);
     }
 }

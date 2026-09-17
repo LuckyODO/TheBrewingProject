@@ -11,12 +11,14 @@ import dev.jsinco.brewery.bukkit.brew.BrewAdapterAccess;
 import dev.jsinco.brewery.bukkit.command.argument.EnumArgument;
 import dev.jsinco.brewery.bukkit.command.argument.RecipeArgument;
 import dev.jsinco.brewery.bukkit.recipe.BukkitRecipeResult;
+import dev.jsinco.brewery.bukkit.util.SchedulerUtil;
 import dev.jsinco.brewery.recipes.BrewScoreImpl;
 import dev.jsinco.brewery.util.BrewUtil;
 import dev.jsinco.brewery.util.MessageUtil;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
+import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 
@@ -43,17 +45,22 @@ public class ReplicateCommand {
     }
 
     private static void givePlayerBrew(Recipe<ItemStack> recipe, CommandContext<CommandSourceStack> context, Player target, BrewQuality quality) {
-        Brew brew = new BrewImpl(BrewUtil.sanitizeSteps(recipe.getSteps()));
-        BrewScore score = brew.score(recipe);
-        if (score instanceof BrewScoreImpl scoreImpl) scoreImpl.setQualityOverride(quality);
-        ItemStack brewItem = recipe.getRecipeResult(quality).newBrewItem(score, brew, new Brew.State.Other());
-        brewItem.editPersistentDataContainer(pdc -> {
-            BrewAdapterAccess.applyBrewTags(pdc, recipe, score.score(), ((BukkitRecipeResult) recipe.getRecipeResult(quality)).getName());
-            BrewAdapterAccess.applyBrewData(pdc, brew);
+        CommandSender sender = context.getSource().getSender();
+        SchedulerUtil.runForEntity(target, () -> {
+            Brew brew = new BrewImpl(BrewUtil.sanitizeSteps(recipe.getSteps()));
+            BrewScore score = brew.score(recipe);
+            if (score instanceof BrewScoreImpl scoreImpl) scoreImpl.setQualityOverride(quality);
+            ItemStack brewItem = recipe.getRecipeResult(quality).newBrewItem(score, brew, new Brew.State.Other());
+            brewItem.editPersistentDataContainer(pdc -> {
+                BrewAdapterAccess.applyBrewTags(pdc, recipe, score.score(), ((BukkitRecipeResult) recipe.getRecipeResult(quality)).getName());
+                BrewAdapterAccess.applyBrewData(pdc, brew);
+            });
+            if (!target.getInventory().addItem(brewItem).isEmpty()) {
+                target.getLocation().getWorld().dropItem(target.getLocation(), brewItem);
+            }
+            SchedulerUtil.runForSender(sender, () -> MessageUtil.message(sender, "tbp.command.create.success",
+                    Placeholder.component("brew_name", brewItem.effectiveName())
+            ));
         });
-        if (!target.getInventory().addItem(brewItem).isEmpty()) {
-            target.getLocation().getWorld().dropItem(target.getLocation(), brewItem);
-        }
-        MessageUtil.message(context.getSource().getSender(), "tbp.command.create.success", Placeholder.component("brew_name", brewItem.effectiveName()));
     }
 }

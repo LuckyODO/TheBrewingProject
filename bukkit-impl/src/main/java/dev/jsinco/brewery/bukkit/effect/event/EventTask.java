@@ -32,7 +32,7 @@ final class EventTask implements Consumer<ScheduledTask> {
     }
 
     @Override
-    public void accept(ScheduledTask scheduledTask) {
+    public synchronized void accept(ScheduledTask scheduledTask) {
         if (executables.isEmpty()) {
             scheduledTask.cancel();
             return;
@@ -78,61 +78,63 @@ final class EventTask implements Consumer<ScheduledTask> {
 
 
     private Consumer<ScheduledTask> executor(EventPropertyExecutable.ExecutionContext context) {
-        return task -> {
-            EventPropertyExecutable skipTarget = null;
-            while (!executables.isEmpty()) {
-                EventPropertyExecutable executable = executables.getFirst();
-                if (executable instanceof CustomEventCompletedExecutable(
-                        CustomEventCompleted eventCompleted
-                )) {
-                    executor.unregisterEvent(playerUuid, eventCompleted.eventKey());
-                }
-                if (skipTarget != null) {
-                    if (executable == skipTarget) {
-                        skipTarget = null;
-                    }
-                    executables.removeFirst();
-                    continue;
-                }
-                if (executable.context() == EventPropertyExecutable.ExecutionContext.PLAYER && context != EventPropertyExecutable.ExecutionContext.PLAYER) {
-                    return;
+        return task -> execute(task, context);
+    }
+
+    private synchronized void execute(ScheduledTask task, EventPropertyExecutable.ExecutionContext context) {
+        EventPropertyExecutable skipTarget = null;
+        while (!executables.isEmpty()) {
+            EventPropertyExecutable executable = executables.getFirst();
+            if (executable instanceof CustomEventCompletedExecutable(
+                    CustomEventCompleted eventCompleted
+            )) {
+                executor.unregisterEvent(playerUuid, eventCompleted.eventKey());
+            }
+            if (skipTarget != null) {
+                if (executable == skipTarget) {
+                    skipTarget = null;
                 }
                 executables.removeFirst();
-                ExecutionOutcome outcome = executable.executeFor(playerUuid);
-                switch (outcome) {
-                    case ExecutionOutcome.Continue ignored -> {
-                        // NO-OP
+                continue;
+            }
+            if (executable.context() == EventPropertyExecutable.ExecutionContext.PLAYER && context != EventPropertyExecutable.ExecutionContext.PLAYER) {
+                return;
+            }
+            executables.removeFirst();
+            ExecutionOutcome outcome = executable.executeFor(playerUuid);
+            switch (outcome) {
+                case ExecutionOutcome.Continue ignored -> {
+                    // NO-OP
+                }
+                case ExecutionOutcome.InsertSteps insertSteps -> {
+                    executables.addAll(0, insertSteps.executables());
+                }
+                case ExecutionOutcome.Skip skip -> {
+                    skipTarget = skip.skipPast();
+                }
+                case ExecutionOutcome.SkipAll ignored -> {
+                    executor.unregisterEvents(playerUuid, executables);
+                    executables.clear();
+                    task.cancel();
+                    return;
+                }
+                case ExecutionOutcome.Wait wait -> {
+                    synchronized (waitTimeLock) {
+                        waitTime = wait.ticks();
                     }
-                    case ExecutionOutcome.InsertSteps insertSteps -> {
-                        executables.addAll(0, insertSteps.executables());
-                    }
-                    case ExecutionOutcome.Skip skip -> {
-                        skipTarget = skip.skipPast();
-                    }
-                    case ExecutionOutcome.SkipAll ignored -> {
-                        executor.unregisterEvents(playerUuid, executables);
-                        executables.clear();
+                    if (EventPropertyExecutable.ExecutionContext.PLAYER == context) {
                         task.cancel();
-                        return;
                     }
-                    case ExecutionOutcome.Wait wait -> {
-                        synchronized (waitTimeLock) {
-                            waitTime = wait.ticks();
-                        }
-                        if (EventPropertyExecutable.ExecutionContext.PLAYER == context) {
-                            task.cancel();
-                        }
-                        return;
-                    }
-                    case ExecutionOutcome.WaitCondition waitCondition -> {
-                        waitCondition.executablesConsumer().accept(List.copyOf(executables));
-                        executables.clear();
-                        task.cancel();
-                        return;
-                    }
+                    return;
+                }
+                case ExecutionOutcome.WaitCondition waitCondition -> {
+                    waitCondition.executablesConsumer().accept(List.copyOf(executables));
+                    executables.clear();
+                    task.cancel();
+                    return;
                 }
             }
-            task.cancel();
-        };
+        }
+        task.cancel();
     }
 }

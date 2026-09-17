@@ -9,6 +9,7 @@ import dev.jsinco.brewery.bukkit.command.argument.EventArgument;
 import dev.jsinco.brewery.bukkit.command.argument.OfflinePlayerArgument;
 import dev.jsinco.brewery.bukkit.command.argument.OfflinePlayerSelectorArgumentResolver;
 import dev.jsinco.brewery.bukkit.util.BukkitMessageUtil;
+import dev.jsinco.brewery.bukkit.util.SchedulerUtil;
 import dev.jsinco.brewery.configuration.Config;
 import dev.jsinco.brewery.api.event.DrunkEvent;
 import dev.jsinco.brewery.util.MessageUtil;
@@ -56,7 +57,7 @@ public class BreweryCommand {
                         .executes(context -> {
                             CommandSender sender = context.getSource().getSender();
                             MessageUtil.message(sender, "tbp.command.reload-message");
-                            TheBrewingProject.getInstance().reload();
+                            SchedulerUtil.runGlobal(TheBrewingProject.getInstance()::reload);
                             return com.mojang.brigadier.Command.SINGLE_SUCCESS;
                         })
                         .requires(commandSourceStack -> commandSourceStack.getSender().hasPermission("brewery.command.reload"))

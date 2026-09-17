@@ -23,6 +23,7 @@ import dev.jsinco.brewery.bukkit.breweries.BrewInventoryImpl;
 import dev.jsinco.brewery.bukkit.structure.PlacedBreweryStructure;
 import dev.jsinco.brewery.bukkit.util.LocationUtil;
 import dev.jsinco.brewery.bukkit.util.SoundPlayer;
+import dev.jsinco.brewery.bukkit.util.SchedulerUtil;
 import dev.jsinco.brewery.configuration.Config;
 import dev.jsinco.brewery.util.MessageUtil;
 import net.kyori.adventure.sound.Sound;
@@ -303,11 +304,6 @@ public class BukkitBarrel implements Barrel<BukkitBarrel, ItemStack, Inventory>,
 
     @Override
     public CompletableFuture<Void> runLocally(Runnable action) {
-        CompletableFuture<Void> completableFuture = new CompletableFuture<>();
-        Bukkit.getRegionScheduler().run(TheBrewingProject.getInstance(), getUniqueLocation(), ignored -> {
-            action.run();
-            completableFuture.complete(null);
-        });
-        return completableFuture;
+        return SchedulerUtil.runForLocation(getUniqueLocation(), action);
     }
 }

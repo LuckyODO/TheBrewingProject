@@ -47,7 +47,7 @@ public class ResourcePackColors {
         List<ResourcePack> resourcePacks;
         try {
             resourcePacks = readResourcePacks();
-        } catch (IOException | InterruptedException e) {
+        } catch (IOException | InterruptedException | RuntimeException e) {
             Logger.logAndTrackErr(e);
             return;
         }

@@ -1,5 +1,5 @@
 [versions]
-paper = "1.21.11-R0.1-SNAPSHOT"
+paper = "26.2.build.121-stable"
 
 # libraries
 gson = "2.11.0"
@@ -41,7 +41,7 @@ jetbrainsAnnotations = "26.0.2-1"
 adventure = "4.23.0"
 junit = "5.13.3"
 junit-platform-launcher = "1.13.3"
-mockbukkit = "4.64.0"
+mockbukkit = "4.116.1"
 sqlite-jdbc = "3.50.1.0"
 
 [libraries]
@@ -96,7 +96,7 @@ adventure-text-minimessage = { group = "net.kyori", name = "adventure-text-minim
 junit-bom = { group = "org.junit", name = "junit-bom", version.ref = "junit" }
 junit-jupiter = { group = "org.junit.jupiter", name = "junit-jupiter", version.ref = "junit" }
 junit-platform-launcher = { group = "org.junit.platform", name = "junit-platform-launcher", version.ref = "junit-platform-launcher" }
-mockbukkit = { group = "org.mockbukkit.mockbukkit", name = "mockbukkit-v1.21", version.ref = "mockbukkit" }
+mockbukkit = { group = "org.mockbukkit.mockbukkit", name = "mockbukkit-v26.2", version.ref = "mockbukkit" }
 sqlite-jdbc = { group = "org.xerial", name = "sqlite-jdbc", version.ref = "sqlite-jdbc" }
 
 [plugins]

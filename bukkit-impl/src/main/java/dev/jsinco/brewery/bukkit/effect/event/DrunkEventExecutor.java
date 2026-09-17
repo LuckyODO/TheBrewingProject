@@ -41,6 +41,7 @@ import dev.jsinco.brewery.bukkit.effect.step.CustomEventExecutable;
 import dev.jsinco.brewery.bukkit.effect.step.SendCommandExecutable;
 import dev.jsinco.brewery.bukkit.effect.step.TeleportExecutable;
 import dev.jsinco.brewery.bukkit.effect.step.WaitStepExecutable;
+import dev.jsinco.brewery.bukkit.util.SchedulerUtil;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
@@ -94,7 +95,16 @@ public class DrunkEventExecutor {
     }
 
     public void doDrunkEvent(UUID playerUuid, DrunkEvent event) {
-        DrunkEventInitiateEvent eventInitiateEvent = new DrunkEventInitiateEvent(event, Bukkit.getPlayer(playerUuid));
+        Player player = Bukkit.getPlayer(playerUuid);
+        if (player != null) {
+            SchedulerUtil.runForEntity(player, () -> doDrunkEventOwned(playerUuid, player, event));
+        } else {
+            SchedulerUtil.runGlobal(() -> doDrunkEventOwned(playerUuid, null, event));
+        }
+    }
+
+    private void doDrunkEventOwned(UUID playerUuid, @Nullable Player player, DrunkEvent event) {
+        DrunkEventInitiateEvent eventInitiateEvent = new DrunkEventInitiateEvent(event, player);
         if (!eventInitiateEvent.callEvent()) {
             return;
         }

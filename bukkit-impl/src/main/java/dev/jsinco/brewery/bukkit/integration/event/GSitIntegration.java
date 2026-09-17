@@ -23,6 +23,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class GSitIntegration implements EventIntegration<GSitIntegration.GSitEvent>, Listener {
 
@@ -127,7 +128,7 @@ public class GSitIntegration implements EventIntegration<GSitIntegration.GSitEve
 
     public record GSitPoseEvent(PoseType poseType, long duration) implements GSitEvent {
 
-        private static final Set<Pose> active = new HashSet<>();
+        private static final Set<Pose> active = ConcurrentHashMap.newKeySet();
 
         @Override
         public void run(Player player) {
@@ -163,7 +164,7 @@ public class GSitIntegration implements EventIntegration<GSitIntegration.GSitEve
 
     public record GSitCrawlEvent(long duration) implements GSitEvent {
 
-        private static final Set<Crawl> active = new HashSet<>();
+        private static final Set<Crawl> active = ConcurrentHashMap.newKeySet();
 
         @Override
         public void run(Player player) {
@@ -199,7 +200,7 @@ public class GSitIntegration implements EventIntegration<GSitIntegration.GSitEve
 
     public record GSitSitEvent(long duration) implements GSitEvent {
 
-        private static final Set<Seat> active = new HashSet<>();
+        private static final Set<Seat> active = ConcurrentHashMap.newKeySet();
 
         @Override
         public void run(Player player) {

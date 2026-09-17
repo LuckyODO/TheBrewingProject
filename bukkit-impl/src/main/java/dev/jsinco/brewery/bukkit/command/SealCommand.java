@@ -7,6 +7,7 @@ import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import dev.jsinco.brewery.api.brew.Brew;
 import dev.jsinco.brewery.brew.BrewImpl;
 import dev.jsinco.brewery.bukkit.brew.BrewAdapterAccess;
+import dev.jsinco.brewery.bukkit.util.SchedulerUtil;
 import dev.jsinco.brewery.util.MessageUtil;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
@@ -45,7 +46,11 @@ public class SealCommand {
         Player target = BreweryCommand.getPlayer(context);
         CommandSender sender = context.getSource().getSender();
         String volumeMessage = parseVolume(context);
+        SchedulerUtil.runForEntity(target, () -> sealAllOwned(target, sender, volumeMessage));
+        return 1;
+    }
 
+    private static void sealAllOwned(Player target, CommandSender sender, @Nullable String volumeMessage) {
         PlayerInventory targetInventory = target.getInventory();
         boolean oneFound = false;
         for (int i = 0; i < targetInventory.getSize(); i++) {
@@ -59,29 +64,38 @@ public class SealCommand {
                 targetInventory.setItem(i, BrewAdapterAccess.toItem(brewOptional.get(), new BrewImpl.State.Seal(volumeMessage)));
             }
         }
-        if (oneFound) {
-            MessageUtil.message(sender, "tbp.command.seal-success", Placeholder.unparsed("player_name", target.getName()));
-        } else {
-            MessageUtil.message(sender, "tbp.command.seal-failure");
-        }
-        return 1;
+        boolean found = oneFound;
+        String targetName = target.getName();
+        SchedulerUtil.runForSender(sender, () -> {
+            if (found) {
+                MessageUtil.message(sender, "tbp.command.seal-success", Placeholder.unparsed("player_name", targetName));
+            } else {
+                MessageUtil.message(sender, "tbp.command.seal-failure");
+            }
+        });
     }
 
     private static int sealOne(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
         Player target = BreweryCommand.getPlayer(context);
         CommandSender sender = context.getSource().getSender();
         String volumeMessage = parseVolume(context);
-
-        PlayerInventory targetInventory = target.getInventory();
-        BrewAdapterAccess.fromItem(targetInventory.getItemInMainHand())
-                .map(brew -> BrewAdapterAccess.toItem(brew, new BrewImpl.State.Seal(volumeMessage)))
-                .ifPresentOrElse(itemStack -> {
-                    targetInventory.setItemInMainHand(itemStack);
-                    MessageUtil.message(sender, "tbp.command.seal-success", Placeholder.unparsed("player_name", target.getName()));
-                }, () -> {
-                    MessageUtil.message(sender, "tbp.command.seal-failure");
-                });
+        SchedulerUtil.runForEntity(target, () -> sealOneOwned(target, sender, volumeMessage));
         return 1;
+    }
+
+    private static void sealOneOwned(Player target, CommandSender sender, @Nullable String volumeMessage) {
+        PlayerInventory targetInventory = target.getInventory();
+        Optional<ItemStack> sealed = BrewAdapterAccess.fromItem(targetInventory.getItemInMainHand())
+                .map(brew -> BrewAdapterAccess.toItem(brew, new BrewImpl.State.Seal(volumeMessage)));
+        sealed.ifPresent(targetInventory::setItemInMainHand);
+        String targetName = target.getName();
+        SchedulerUtil.runForSender(sender, () -> {
+            if (sealed.isPresent()) {
+                MessageUtil.message(sender, "tbp.command.seal-success", Placeholder.unparsed("player_name", targetName));
+            } else {
+                MessageUtil.message(sender, "tbp.command.seal-failure");
+            }
+        });
     }
 
     private static @Nullable String parseVolume(CommandContext<CommandSourceStack> context) {

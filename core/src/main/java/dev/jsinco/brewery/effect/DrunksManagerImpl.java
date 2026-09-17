@@ -100,7 +100,7 @@ public class DrunksManagerImpl<C> implements DrunksManager {
     /**
      * @param timestamp Should be in relation to the internal clock in drunk manager
      */
-    public @Nullable DrunkState consume(UUID playerUuid, List<ModifierConsume> modifiers, long timestamp) {
+    public synchronized @Nullable DrunkState consume(UUID playerUuid, List<ModifierConsume> modifiers, long timestamp) {
         boolean alreadyDrunk = drunks.containsKey(playerUuid);
         DrunkState initialState = (alreadyDrunk ? drunks.get(playerUuid).recalculate(timestamp) : new DrunkStateImpl(
                 timestamp, -1, DrunkenModifierSection.modifiers()
@@ -142,7 +142,7 @@ public class DrunksManagerImpl<C> implements DrunksManager {
     }
 
     @Override
-    public @Nullable DrunkState getDrunkState(UUID playerUuid) {
+    public synchronized @Nullable DrunkState getDrunkState(UUID playerUuid) {
         if (!drunks.containsKey(playerUuid)) {
             return null;
         }
@@ -193,7 +193,7 @@ public class DrunksManagerImpl<C> implements DrunksManager {
     }
 
     @Override
-    public void reset(@NonNull Set<EventData> allowedEvents) {
+    public synchronized void reset(@NonNull Set<EventData> allowedEvents) {
         plannedEvents.clear();
         drunks.clear();
         this.allowedEvents = allowedEvents;
@@ -216,7 +216,7 @@ public class DrunksManagerImpl<C> implements DrunksManager {
     }
 
     @Override
-    public void clear(@NonNull UUID playerUuid) {
+    public synchronized void clear(@NonNull UUID playerUuid) {
         Long plannedEventTime = plannedEvents.remove(playerUuid);
         drunks.remove(playerUuid);
         try {
@@ -233,7 +233,7 @@ public class DrunksManagerImpl<C> implements DrunksManager {
         }
     }
 
-    public void tick(BiConsumer<UUID, DrunkEvent> action, Predicate<UUID> onlinePredicate) {
+    public synchronized void tick(BiConsumer<UUID, DrunkEvent> action, Predicate<UUID> onlinePredicate) {
         Map<UUID, DrunkEvent> currentEvents = events.remove(timeSupplier.getAsLong());
         if (currentEvents == null) {
             return;
@@ -254,7 +254,7 @@ public class DrunksManagerImpl<C> implements DrunksManager {
     }
 
     @Override
-    public void planEvent(@NonNull UUID playerUuid) {
+    public synchronized void planEvent(@NonNull UUID playerUuid) {
         DrunkState drunkState = getDrunkState(playerUuid);
         if (drunkState == null) {
             return;
@@ -282,17 +282,17 @@ public class DrunksManagerImpl<C> implements DrunksManager {
             }
             events.get(plannedEvents.get(playerUuid)).remove(playerUuid);
         }
-        events.computeIfAbsent(time, ignored -> new HashMap<>()).put(playerUuid, drunkEvent);
+        events.computeIfAbsent(time, ignored -> new ConcurrentHashMap<>()).put(playerUuid, drunkEvent);
         plannedEvents.put(playerUuid, time);
     }
 
     @Override
-    public void registerPassedOut(@NonNull UUID playerUuid) {
+    public synchronized void registerPassedOut(@NonNull UUID playerUuid) {
         drunks.computeIfPresent(playerUuid, (ignored, drunkState) -> drunkState.withPassOut(timeSupplier.getAsLong()));
     }
 
     @Override
-    public boolean isPassedOut(@NonNull UUID playerUUID) {
+    public synchronized boolean isPassedOut(@NonNull UUID playerUUID) {
         return drunks.containsKey(playerUUID) && isPassedOut(drunks.get(playerUUID));
     }
 
@@ -305,12 +305,17 @@ public class DrunksManagerImpl<C> implements DrunksManager {
     }
 
     @Override
-    public @Nullable Pair<DrunkEvent, Long> getPlannedEvent(@NonNull UUID playerUUID) {
+    public synchronized @Nullable Pair<DrunkEvent, Long> getPlannedEvent(@NonNull UUID playerUUID) {
         Long time = plannedEvents.get(playerUUID);
         if (time == null) {
             return null;
         }
-        return new Pair<>(events.get(time).get(playerUUID), time);
+        Map<UUID, DrunkEvent> scheduled = events.get(time);
+        if (scheduled == null || !scheduled.containsKey(playerUUID)) {
+            plannedEvents.remove(playerUUID, time);
+            return null;
+        }
+        return new Pair<>(scheduled.get(playerUUID), time);
     }
 
     public LongSupplier getTimeSupplier() {
