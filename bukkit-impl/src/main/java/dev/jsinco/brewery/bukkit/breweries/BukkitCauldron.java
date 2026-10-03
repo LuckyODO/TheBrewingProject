@@ -2,9 +2,13 @@ package dev.jsinco.brewery.bukkit.breweries;
 
 import dev.jsinco.brewery.api.brew.Brew;
 import dev.jsinco.brewery.api.brew.BrewingStep;
+import dev.jsinco.brewery.api.brew.IncompleteBehavior;
 import dev.jsinco.brewery.api.breweries.Cauldron;
 import dev.jsinco.brewery.api.breweries.CauldronType;
+import dev.jsinco.brewery.api.ingredient.AlternateIngredientState;
 import dev.jsinco.brewery.api.ingredient.Ingredient;
+import dev.jsinco.brewery.api.ingredient.IngredientMeta;
+import dev.jsinco.brewery.api.ingredient.IngredientWithMeta;
 import dev.jsinco.brewery.api.moment.Interval;
 import dev.jsinco.brewery.api.moment.Moment;
 import dev.jsinco.brewery.api.recipe.DefaultRecipe;
@@ -21,6 +25,7 @@ import dev.jsinco.brewery.bukkit.TheBrewingProject;
 import dev.jsinco.brewery.bukkit.animation.AnimationManager;
 import dev.jsinco.brewery.bukkit.api.BukkitAdapter;
 import dev.jsinco.brewery.bukkit.api.event.process.BrewCauldronProcessEvent;
+import dev.jsinco.brewery.bukkit.api.event.structure.CauldronAccessEvent;
 import dev.jsinco.brewery.bukkit.api.event.transaction.CauldronInsertEvent;
 import dev.jsinco.brewery.bukkit.api.transaction.ItemSource;
 import dev.jsinco.brewery.bukkit.brew.BrewAdapterAccess;
@@ -35,6 +40,8 @@ import dev.jsinco.brewery.bukkit.util.color.ColorUtil;
 import dev.jsinco.brewery.configuration.AnimationDisplay;
 import dev.jsinco.brewery.configuration.Config;
 import dev.jsinco.brewery.configuration.ParticleDefinition;
+import dev.jsinco.brewery.configuration.features.FeatureFlag;
+import dev.jsinco.brewery.configuration.features.FeaturesConfig;
 import dev.jsinco.brewery.sound.SoundDefinition;
 import dev.jsinco.brewery.util.BrewUtil;
 import dev.jsinco.brewery.util.PresetColorsUtil;
@@ -120,7 +127,7 @@ public class BukkitCauldron implements Cauldron {
             }
             this.hot = isHeatSource(getBlock().getRelative(BlockFace.DOWN));
             recalculateBrewTime();
-            if (Config.config().cauldrons().coloredWater() && (waterColorer == null || waterColorer.isDead())) {
+            if (FeaturesConfig.test(FeatureFlag.COLORED_CAULDRONS, bukkitLocation.getWorld().getName()) && (waterColorer == null || waterColorer.isDead())) {
                 waterColorer = getBlock().getWorld().spawn(bukkitLocation.clone().add(0.5, 0, 0.5), TextDisplay.class, textDisplay -> {
                     setWaterText(textDisplay);
                     textDisplay.setTransformation(compileTransformation(bukkitLocation.getBlock().getBlockData()));
@@ -185,12 +192,17 @@ public class BukkitCauldron implements Cauldron {
     }
 
     private Color computeResultColor(Optional<Recipe<ItemStack>> recipeOptional) {
-        if (recipeOptional.isEmpty()) {
+        if (recipeOptional.isEmpty() || matcherResult.quality().isEmpty()) {
             return convert(Config.config().cauldrons().failedParticleColor());
         }
         RecipeResult<ItemStack> recipeResult = matcherResult.recipeResult().orElse(null);
         if (matcherResult.score().completed() && recipeResult != null) {
             return Color.fromRGB(recipeResult.brewColor().getRGB() & 0xFFFFFF);
+        }
+        if (!matcherResult.score().completed()
+                && recipeOptional.get().getSteps().size() == matcherResult.matchingSteps().size()
+                && recipeOptional.get().getSteps().getLast().incompleteBehavior() == IncompleteBehavior.FAIL) {
+            return Color.fromRGB(recipeOptional.get().getRecipeResult(matcherResult.score().brewQuality()).brewColor().getRGB() & 0xFFFFFF);
         }
         List<DefaultRecipe<ItemStack>> defaultRecipes = new ArrayList<>(BrewAdapterAccess.getPossibleDefaultRecipes(
                 recipeOptional.orElse(null),
@@ -230,10 +242,19 @@ public class BukkitCauldron implements Cauldron {
     }
 
     public boolean withIngredient(@NonNull ItemStack item, Player player) {
+        CauldronAccessEvent accessEvent = new CauldronAccessEvent(
+                player.hasPermission("brewery.cauldron.access")
+                        ? new CancelState.Allowed()
+                        : new CancelState.PermissionDenied(Component.translatable("tbp.cauldron.access-denied")),
+                player,
+                getBlock(),
+                this
+        );
+        accessEvent.callEvent();
+
         CauldronInsertEvent insertEvent = new CauldronInsertEvent(this,
                 new ItemSource.ItemBasedSource(item),
-                player.hasPermission("brewery.cauldron.access") ?
-                        new CancelState.Allowed() : new CancelState.PermissionDenied(Component.translatable("tbp.cauldron.access-denied")),
+                accessEvent.getCancelState(),
                 player
         );
         if (!insertEvent.callEvent()) {
@@ -242,6 +263,7 @@ public class BukkitCauldron implements Cauldron {
             }
             return false;
         }
+
         this.hot = isHeatSource(getBlock().getRelative(BlockFace.DOWN));
         ItemStack addedItem = insertEvent.getItemSource().get();
         Optional<Brew> optionalAddedBrew = BrewAdapterAccess.fromItem(addedItem);
@@ -266,25 +288,45 @@ public class BukkitCauldron implements Cauldron {
     private Brew withIngredient(Ingredient ingredient) {
         long time = TheBrewingProject.getInstance().getTime();
         Brew newBrew;
+        final Ingredient finalIngredient;
+        boolean raw = !brew.getCompletedSteps().isEmpty() && brew.lastCompletedStep() instanceof BrewingStep.CauldronStep<?> cauldronStep
+                && cauldronStep.time().moment() > Config.config().cauldrons().cookingMinuteTicks();
+        if (raw) {
+            if (ingredient instanceof IngredientWithMeta ingredientWithMeta) {
+                finalIngredient = ingredientWithMeta.withMeta(IngredientMeta.ALTERNATE_STATE, AlternateIngredientState.RAW);
+            } else {
+                finalIngredient = new IngredientWithMeta(ingredient, Map.of(IngredientMeta.ALTERNATE_STATE, AlternateIngredientState.RAW));
+            }
+        } else {
+            finalIngredient = ingredient;
+        }
         if (hot) {
             newBrew = brew.withLastStep(BrewingStep.Cook.class,
                     cook -> {
                         Map<Ingredient, Integer> ingredients = new HashMap<>(cook.ingredients());
-                        int amount = ingredients.computeIfAbsent(ingredient, ignored -> 0);
-                        ingredients.put(ingredient, amount + 1);
+                        int amount = ingredients.computeIfAbsent(finalIngredient, ignored -> 0);
+                        ingredients.put(finalIngredient, amount + 1);
+                        if (Config.config().cauldrons().resetCookTimeOnIngredientAdd() && !raw) {
+                            return cook.withIngredients(ingredients)
+                                    .withTime(new Interval(time, time));
+                        }
                         return cook.withIngredients(ingredients);
                     },
-                    () -> new CookStepImpl(new Interval(time, time), Map.of(ingredient, 1), cauldronType)
+                    () -> new CookStepImpl(new Interval(time, time), Map.of(finalIngredient, 1), cauldronType)
             );
         } else {
             newBrew = brew.withLastStep(BrewingStep.Mix.class,
                     mix -> {
                         Map<Ingredient, Integer> ingredients = new HashMap<>(mix.ingredients());
-                        int amount = ingredients.computeIfAbsent(ingredient, ignored -> 0);
-                        ingredients.put(ingredient, amount + 1);
+                        int amount = ingredients.computeIfAbsent(finalIngredient, ignored -> 0);
+                        ingredients.put(finalIngredient, amount + 1);
+                        if (Config.config().cauldrons().resetCookTimeOnIngredientAdd() && !raw) {
+                            return mix.withIngredients(ingredients)
+                                    .withTime(new Interval(time, time));
+                        }
                         return mix.withIngredients(ingredients);
                     },
-                    () -> new MixStepImpl(new Interval(time, time), Map.of(ingredient, 1), cauldronType)
+                    () -> new MixStepImpl(new Interval(time, time), Map.of(finalIngredient, 1), cauldronType)
             );
         }
         return newBrew;
@@ -312,9 +354,16 @@ public class BukkitCauldron implements Cauldron {
             merged = Optional.of(addedBrew.withStep(newStep()));
         } else {
             BrewingStep thisStep = existing.removeLast();
+            final BrewingStep stepToAdd;
+            if (thisStep instanceof BrewingStep.CauldronStep<?> cauldronStep) {
+                long time = TheBrewingProject.getInstance().getTime();
+                stepToAdd = cauldronStep.withTime(new Interval(time, time));
+            } else {
+                stepToAdd = thisStep;
+            }
             List<BrewingStep> added = new ArrayList<>(addedBrew.getCompletedSteps());
             merged = BrewUtil.mergeSteps(existing, added)
-                    .map(steps -> Stream.concat(steps.stream(), Stream.of(thisStep)))
+                    .map(steps -> Stream.concat(steps.stream(), Stream.of(stepToAdd)))
                     .map(Stream::toList)
                     .map(this.brew::withStepsReplaced);
         }

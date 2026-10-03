@@ -18,6 +18,7 @@ import dev.jsinco.brewery.brew.AgeStepImpl;
 import dev.jsinco.brewery.bukkit.TheBrewingProject;
 import dev.jsinco.brewery.bukkit.api.BukkitAdapter;
 import dev.jsinco.brewery.bukkit.api.event.process.BrewAgeEvent;
+import dev.jsinco.brewery.bukkit.api.event.structure.BarrelAccessEvent;
 import dev.jsinco.brewery.bukkit.brew.BrewAdapterAccess;
 import dev.jsinco.brewery.bukkit.breweries.BrewInventoryImpl;
 import dev.jsinco.brewery.bukkit.structure.PlacedBreweryStructure;
@@ -25,12 +26,15 @@ import dev.jsinco.brewery.bukkit.util.LocationUtil;
 import dev.jsinco.brewery.bukkit.util.SoundPlayer;
 import dev.jsinco.brewery.bukkit.util.SchedulerUtil;
 import dev.jsinco.brewery.configuration.Config;
+import dev.jsinco.brewery.configuration.features.FeatureFlag;
+import dev.jsinco.brewery.configuration.features.FeaturesConfig;
 import dev.jsinco.brewery.util.MessageUtil;
 import net.kyori.adventure.sound.Sound;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
+import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
@@ -66,6 +70,9 @@ public class BukkitBarrel implements Barrel<BukkitBarrel, ItemStack, Inventory>,
 
     @Override
     public CancelState open(@NonNull BreweryLocation location, Holder.@NonNull Player playerHolder) {
+        if (!FeaturesConfig.test(FeatureFlag.BARRELS, uniqueLocation.getWorld().getName())) {
+            return new CancelState.Cancelled();
+        }
         Player player = BukkitAdapter.toPlayer(playerHolder)
                 .orElse(null);
         if (player == null) {
@@ -111,15 +118,25 @@ public class BukkitBarrel implements Barrel<BukkitBarrel, ItemStack, Inventory>,
     @Override
     public boolean open(@NonNull BreweryLocation breweryLocation, @NonNull UUID playerUuid) {
         Optional<Holder.Player> playerOptional = HolderProviderHolder.instance().player(playerUuid);
-        CancelState cancelState = playerOptional
-                .map(player -> open(breweryLocation, player))
-                .orElseGet(CancelState.Cancelled::new);
+        if (playerOptional.isEmpty()) {
+            return false;
+        }
+        Holder.Player playerHolder = playerOptional.get();
+        CancelState cancelState = open(breweryLocation, playerHolder);
+        Player player = BukkitAdapter.toPlayer(playerHolder).orElse(null);
+        Block block = BukkitAdapter.toBlock(breweryLocation).orElse(null);
+        if (player != null && block != null) {
+            BarrelAccessEvent event = new BarrelAccessEvent(cancelState, player, block, this);
+            event.callEvent();
+            cancelState = event.getCancelState();
+        }
         return switch (cancelState) {
             case CancelState.Cancelled ignored -> false;
             case CancelState.Allowed ignored -> true;
             case CancelState.PermissionDenied(Component message) -> {
-                playerOptional.flatMap(BukkitAdapter::toPlayer)
-                        .ifPresent(player -> player.sendMessage(message));
+                if (player != null) {
+                    player.sendMessage(message);
+                }
                 yield false;
             }
         };

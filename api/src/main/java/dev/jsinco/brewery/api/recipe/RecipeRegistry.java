@@ -1,6 +1,5 @@
 package dev.jsinco.brewery.api.recipe;
 
-import dev.jsinco.brewery.api.brew.Brew;
 import dev.jsinco.brewery.api.brew.BrewingStep;
 import dev.jsinco.brewery.api.ingredient.BaseIngredient;
 import dev.jsinco.brewery.api.ingredient.Ingredient;
@@ -85,4 +84,17 @@ public interface RecipeRegistry<I> {
      * @return All ingredients registered in a recipe
      */
     Set<BaseIngredient> registeredIngredients();
+
+    /**
+     * @param recipeGroup The recipe group to register
+     */
+    void registerGroup(RecipeGroup<I> recipeGroup);
+
+    /**
+     * Get a group of recipes
+     *
+     * @param id the group id
+     * @return a group of recipes
+     */
+    Optional<RecipeGroup<I>> getRecipeGroup(String id);
 }

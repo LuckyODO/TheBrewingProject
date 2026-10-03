@@ -54,10 +54,6 @@ public class CauldronSection extends OkaeriConfig implements Configuration.Cauld
     @CustomKey("failed-particle-color")
     private Color failedParticleColor = new Color(NamedTextColor.GRAY.value());
 
-    @Comment("Whether to color the water in cauldrons using a text display")
-    @CustomKey("colored-water")
-    private boolean coloredWater = true;
-
     @Comment("The water color is a text display, this defines the opacity of the text display (0 - 255)")
     @CustomKey("water-color-opacity")
     private int waterColorOpacity = (128 & 0xFF);
@@ -65,6 +61,10 @@ public class CauldronSection extends OkaeriConfig implements Configuration.Cauld
     @Comment("To whom animations should be rendered when adding items [none, brewer, everyone]")
     @CustomKey("ingredient-added-animation-display")
     private AnimationDisplay ingredientAddedAnimation = AnimationDisplay.NONE;
+
+    @Comment("Reset the ingredient cook time whenever a new ingredient is added")
+    @CustomKey("reset-cook-time-on-ingredient-add")
+    private boolean resetCookTimeOnIngredientAdd = true;
 
     @Comment("How to display the time [action_bar, chat, title]")
     @CustomKey("clock-display")
@@ -142,10 +142,6 @@ public class CauldronSection extends OkaeriConfig implements Configuration.Cauld
         return this.failedParticleColor;
     }
 
-    public boolean coloredWater() {
-        return this.coloredWater;
-    }
-
     public int waterColorOpacity() {
         return this.waterColorOpacity;
     }
@@ -172,5 +168,9 @@ public class CauldronSection extends OkaeriConfig implements Configuration.Cauld
 
     public List<ParticleDefinition> mixParticleDefinitions() {
         return mixParticleDefinitions;
+    }
+
+    public boolean resetCookTimeOnIngredientAdd() {
+        return resetCookTimeOnIngredientAdd;
     }
 }
