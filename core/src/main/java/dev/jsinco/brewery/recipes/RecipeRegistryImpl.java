@@ -175,6 +175,13 @@ public class RecipeRegistryImpl<I> implements RecipeRegistry<I> {
         return Optional.ofNullable(recipeGroups.get(id));
     }
 
+    @Override
+    public Collection<RecipeGroup<I>> getRecipeGroups() {
+        synchronized (recipeGroups) {
+            return List.copyOf(recipeGroups.values());
+        }
+    }
+
     public synchronized void clear() {
         recipes.clear();
         defaultRecipes.clear();
